@@ -1,0 +1,7 @@
+name = "stream-worker"
+main = "index.js"
+compatibility_date = "2026-03-01"
+compatibility_flags = ["nodejs_compat"]
+
+[browser]
+binding = "MYBROWSER"
