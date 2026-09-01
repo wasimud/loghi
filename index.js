@@ -5,7 +5,7 @@ export default {
     const url = new URL(request.url);
     const targetUrl = url.searchParams.get("url");
 
-    // Helper function to run Puppeteer and extract the m3u8 stream
+    // Funzione per estrarre il flusso .m3u8 tramite Puppeteer
     async function extractStream(pageUrl) {
       let capturedStreamUrl = null;
       let browser;
@@ -37,48 +37,21 @@ export default {
       }
     }
 
-    // Gestione della richiesta per /player/
-    if (url.pathname.startsWith("/player") && targetUrl) {
-      // Check if the targetUrl itself ends with .m3u8 or contains it as the final stream
-      if (targetUrl.endsWith(".m3u8") || targetUrl.includes(".m3u8?")) {
-        // Se l'URL finale è già un .m3u8, riproducilo direttamente
-        return renderPlayer(targetUrl);
-      }
-
-      try {
-        const capturedStreamUrl = await extractStream(targetUrl);
-
-        if (!capturedStreamUrl) {
-          return new Response("Nessun flusso .m3u8 trovato nel traffico di rete della pagina.", {
-            status: 404,
-            headers: { "Access-Control-Allow-Origin": "*" }
-          });
-        }
-
-        // Reindirizza o aggiorna l'URL aggiungendo il .m3u8 trovato alla fine (es. /player/?url=target/index.m3u8)
-        const newRedirectUrl = `${url.origin}${url.pathname}?url=${encodeURIComponent(targetUrl + "/index.m3u8")}&stream=${encodeURIComponent(capturedStreamUrl)}`;
-        
-        // In alternativa, se vuoi restituire direttamente il player con il flusso catturato:
-        return renderPlayer(capturedStreamUrl);
-
-      } catch (err) {
-        return new Response("Errore durante l'ispezione: " + err.message, {
-          status: 500,
-          headers: { "Access-Control-Allow-Origin": "*" }
-        });
-      }
-    }
-
-    // Comportamento standard se manca il parametro url
     if (!targetUrl) {
-      return new Response("Uso corretto: \n- JSON: https://tuo-worker.workers.dev/?url=...\n- Player: https://tuo-worker.workers.dev/player/?url=...", {
+      return new Response("Uso corretto: \n- JSON: https://tuo-worker.workers.dev/?url=...\n- Player HTML: https://tuo-worker.workers.dev/player/?url=...\n- M3U/Stream Diretto: https://tuo-worker.workers.dev/?url=.../index.m3u8", {
         headers: { "content-type": "text/plain;charset=UTF-8", "Access-Control-Allow-Origin": "*" }
       });
     }
 
-    // Comportamento standard per JSON
+    // Pulisciamo l'URL di target rimuovendo /index.m3u8 se l'utente lo ha aggiunto per l'estrazione
+    let cleanTargetUrl = targetUrl;
+    const isDirectRequest = targetUrl.endsWith("/index.m3u8");
+    if (isDirectRequest) {
+      cleanTargetUrl = targetUrl.replace(/\/index\.m3u8$/, "");
+    }
+
     try {
-      const capturedStreamUrl = await extractStream(targetUrl);
+      const capturedStreamUrl = await extractStream(cleanTargetUrl);
 
       if (!capturedStreamUrl) {
         return new Response("Nessun flusso .m3u8 trovato nel traffico di rete della pagina.", {
@@ -87,12 +60,23 @@ export default {
         });
       }
 
+      // Se la richiesta arriva dal player HTML (/player/)
+      if (url.pathname.startsWith("/player")) {
+        return renderPlayer(capturedStreamUrl);
+      }
+
+      // Se l'utente ha usato /index.m3u8 (es. per liste M3U), restituiamo il redirect diretto al flusso
+      if (isDirectRequest) {
+        return Response.redirect(capturedStreamUrl, 302);
+      }
+
+      // Comportamento standard JSON
       return new Response(
         JSON.stringify({
           success: true,
-          page: targetUrl,
+          page: cleanTargetUrl,
           streamUrl: capturedStreamUrl,
-          formattedUrl: `${targetUrl}/index.m3u8`
+          m3u8Format: `${url.origin}/?url=${encodeURIComponent(cleanTargetUrl + "/index.m3u8")}`
         }, null, 2),
         {
           headers: {
@@ -151,7 +135,7 @@ function renderPlayer(streamUrl) {
   return new Response(playerHtml, {
     headers: {
       "content-type": "text/html;charset=UTF-8",
-      "Access-Control-Origin": "*",
+      "Access-Control-Allow-Origin": "*",
     },
   });
 }
