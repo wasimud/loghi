@@ -5,7 +5,6 @@ export default {
     const url = new URL(request.url);
     const targetUrl = url.searchParams.get("url");
 
-    // Funzione per estrarre il flusso .m3u8 tramite Puppeteer
     async function extractStream(pageUrl) {
       let capturedStreamUrl = null;
       let browser;
@@ -38,17 +37,14 @@ export default {
     }
 
     if (!targetUrl) {
-      return new Response("Uso corretto: \n- JSON: https://tuo-worker.workers.dev/?url=...\n- Player HTML: https://tuo-worker.workers.dev/player/?url=...\n- M3U/Stream Diretto: https://tuo-worker.workers.dev/?url=.../index.m3u8", {
+      return new Response("Uso corretto: \n- Player Web HTML: https://tuo-worker.workers.dev/player/?url=...\n- Flusso per IPTV/M3U: https://tuo-worker.workers.dev/player/?url=.../index.m3u8\n- JSON: https://tuo-worker.workers.dev/?url=...", {
         headers: { "content-type": "text/plain;charset=UTF-8", "Access-Control-Allow-Origin": "*" }
       });
     }
 
-    // Pulisciamo l'URL di target rimuovendo /index.m3u8 se l'utente lo ha aggiunto per l'estrazione
-    let cleanTargetUrl = targetUrl;
-    const isDirectRequest = targetUrl.endsWith("/index.m3u8");
-    if (isDirectRequest) {
-      cleanTargetUrl = targetUrl.replace(/\/index\.m3u8$/, "");
-    }
+    // Controlla se l'URL termina con /index.m3u8
+    const isM3u8Request = targetUrl.endsWith("/index.m3u8");
+    const cleanTargetUrl = isM3u8Request ? targetUrl.replace(/\/index\.m3u8$/, "") : targetUrl;
 
     try {
       const capturedStreamUrl = await extractStream(cleanTargetUrl);
@@ -60,14 +56,14 @@ export default {
         });
       }
 
-      // Se la richiesta arriva dal player HTML (/player/)
-      if (url.pathname.startsWith("/player")) {
-        return renderPlayer(capturedStreamUrl);
+      // Se la richiesta parte da /player/ e finisce con /index.m3u8, reindirizza direttamente al flusso reale per IPTV/M3U
+      if (url.pathname.startsWith("/player") && isM3u8Request) {
+        return Response.redirect(capturedStreamUrl, 302);
       }
 
-      // Se l'utente ha usato /index.m3u8 (es. per liste M3U), restituiamo il redirect diretto al flusso
-      if (isDirectRequest) {
-        return Response.redirect(capturedStreamUrl, 302);
+      // Se è una richiesta /player/ normale, mostra la pagina HTML con il player integrato
+      if (url.pathname.startsWith("/player")) {
+        return renderPlayer(capturedStreamUrl);
       }
 
       // Comportamento standard JSON
@@ -76,7 +72,7 @@ export default {
           success: true,
           page: cleanTargetUrl,
           streamUrl: capturedStreamUrl,
-          m3u8Format: `${url.origin}/?url=${encodeURIComponent(cleanTargetUrl + "/index.m3u8")}`
+          m3u8Link: `${url.origin}/player/?url=${encodeURIComponent(cleanTargetUrl + "/index.m3u8")}`
         }, null, 2),
         {
           headers: {
