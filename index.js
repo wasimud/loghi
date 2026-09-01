@@ -5,8 +5,8 @@ export default {
     const url = new URL(request.url);
     const targetUrl = url.searchParams.get("url");
 
-    // Se la richiesta parte da /player/ e ha il parametro url
-    if (url.pathname.startsWith("/player") && targetUrl) {
+    // Funzione per estrarre il flusso .m3u8 tramite Puppeteer
+    async function extractStream(pageUrl) {
       let capturedStreamUrl = null;
       let browser;
 
@@ -21,7 +21,7 @@ export default {
           }
         });
 
-        await page.goto(targetUrl, { waitUntil: "networkidle2", timeout: 20000 });
+        await page.goto(pageUrl, { waitUntil: "networkidle2", timeout: 20000 });
 
         let waitTime = 0;
         while (!capturedStreamUrl && waitTime < 6000) {
@@ -30,97 +30,28 @@ export default {
         }
 
         await browser.close();
-
-        if (!capturedStreamUrl) {
-          return new Response("Nessun flusso .m3u8 trovato nel traffico di rete della pagina.", {
-            status: 404,
-            headers: { "Access-Control-Allow-Origin": "*" }
-          });
-        }
-
-        // Restituisce una pagina HTML con un player video integrato (hls.js) che riproduce istantaneamente il flusso trovato
-        const playerHtml = `
-          <!DOCTYPE html>
-          <html lang="it">
-          <head>
-              <meta charset="UTF-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>Stream Player</title>
-              <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-              <style>
-                  body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; }
-                  video { width: 100%; height: 100%; max-height: 100vh; }
-              </style>
-          </head>
-          <body>
-              <video id="video" controls autoplay playsinline></video>
-              <script>
-                  var video = document.getElementById('video');
-                  var streamUrl = "${capturedStreamUrl}";
-                  if (Hls.isSupported()) {
-                      var hls = new Hls();
-                      hls.loadSource(streamUrl);
-                      hls.attachMedia(video);
-                      hls.on(Hls.Events.MANIFEST_PARSED,function() {
-                          video.play();
-                      });
-                  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                      video.src = streamUrl;
-                      video.addEventListener('loadedmetadata',function() {
-                          video.play();
-                      });
-                  }
-              </script>
-          </body>
-          </html>
-        `;
-
-        return new Response(playerHtml, {
-          headers: {
-            "content-type": "text/html;charset=UTF-8",
-            "Access-Control-Allow-Origin": "*",
-          },
-        });
-
+        return capturedStreamUrl;
       } catch (err) {
         if (browser) await browser.close();
-        return new Response("Errore durante l'ispezione: " + err.message, {
-          status: 500,
-          headers: { "Access-Control-Allow-Origin": "*" }
-        });
+        throw err;
       }
     }
 
-    // Comportamento standard precedente (restituisce il JSON)
     if (!targetUrl) {
-      return new Response("Uso corretto: \n- JSON: https://tuo-worker.workers.dev/?url=...\n- Player: https://tuo-worker.workers.dev/player/?url=...", {
+      return new Response("Uso corretto: \n- JSON: https://tuo-worker.workers.dev/?url=...\n- Player HTML: https://tuo-worker.workers.dev/player/?url=...\n- M3U/Stream Diretto: https://tuo-worker.workers.dev/?url=.../index.m3u8", {
         headers: { "content-type": "text/plain;charset=UTF-8", "Access-Control-Allow-Origin": "*" }
       });
     }
 
-    let capturedStreamUrl = null;
-    let browser;
+    // Pulisciamo l'URL di target rimuovendo /index.m3u8 se l'utente lo ha aggiunto per l'estrazione
+    let cleanTargetUrl = targetUrl;
+    const isDirectRequest = targetUrl.endsWith("/index.m3u8");
+    if (isDirectRequest) {
+      cleanTargetUrl = targetUrl.replace(/\/index\.m3u8$/, "");
+    }
 
     try {
-      browser = await puppeteer.launch(env.MYBROWSER);
-      const page = await browser.newPage();
-
-      page.on("request", (req) => {
-        const reqUrl = req.url();
-        if (reqUrl.includes(".m3u8") && !capturedStreamUrl) {
-          capturedStreamUrl = reqUrl;
-        }
-      });
-
-      await page.goto(targetUrl, { waitUntil: "networkidle2", timeout: 20000 });
-
-      let waitTime = 0;
-      while (!capturedStreamUrl && waitTime < 6000) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        waitTime += 500;
-      }
-
-      await browser.close();
+      const capturedStreamUrl = await extractStream(cleanTargetUrl);
 
       if (!capturedStreamUrl) {
         return new Response("Nessun flusso .m3u8 trovato nel traffico di rete della pagina.", {
@@ -129,11 +60,23 @@ export default {
         });
       }
 
+      // Se la richiesta arriva dal player HTML (/player/)
+      if (url.pathname.startsWith("/player")) {
+        return renderPlayer(capturedStreamUrl);
+      }
+
+      // Se l'utente ha usato /index.m3u8 (es. per liste M3U), restituiamo il redirect diretto al flusso
+      if (isDirectRequest) {
+        return Response.redirect(capturedStreamUrl, 302);
+      }
+
+      // Comportamento standard JSON
       return new Response(
         JSON.stringify({
           success: true,
-          page: targetUrl,
-          streamUrl: capturedStreamUrl
+          page: cleanTargetUrl,
+          streamUrl: capturedStreamUrl,
+          m3u8Format: `${url.origin}/?url=${encodeURIComponent(cleanTargetUrl + "/index.m3u8")}`
         }, null, 2),
         {
           headers: {
@@ -144,7 +87,6 @@ export default {
       );
 
     } catch (err) {
-      if (browser) await browser.close();
       return new Response("Errore durante l'ispezione: " + err.message, {
         status: 500,
         headers: { "Access-Control-Allow-Origin": "*" }
@@ -152,3 +94,48 @@ export default {
     }
   },
 };
+
+function renderPlayer(streamUrl) {
+  const playerHtml = `
+    <!DOCTYPE html>
+    <html lang="it">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Stream Player</title>
+        <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+        <style>
+            body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; }
+            video { width: 100%; height: 100%; max-height: 100vh; }
+        </style>
+    </head>
+    <body>
+        <video id="video" controls autoplay playsinline></video>
+        <script>
+            var video = document.getElementById('video');
+            var streamUrl = "${streamUrl}";
+            if (Hls.isSupported()) {
+                var hls = new Hls();
+                hls.loadSource(streamUrl);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                    video.play();
+                });
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = streamUrl;
+                video.addEventListener('loadedmetadata', function() {
+                    video.play();
+                });
+            }
+        </script>
+    </body>
+    </html>
+  `;
+
+  return new Response(playerHtml, {
+    headers: {
+      "content-type": "text/html;charset=UTF-8",
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+}
