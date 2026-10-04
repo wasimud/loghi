@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Player</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background-color: #000;
+      overflow: hidden;
+      position: relative;
+      font-family: Arial, sans-serif;
+    }
+
+    /* Container video */
+    #player-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    iframe {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      display: block;
+    }
+
+    /* Schermata di avvio con pulsante Play */
+    #start-screen {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: #050505;
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+    }
+
+    /* Stile pulsante PLAY */
+    #play-btn {
+      background-color: #e50914;
+      color: #ffffff;
+      border: 3px solid transparent;
+      padding: 20px 45px;
+      font-size: 22px;
+      font-weight: bold;
+      border-radius: 50px;
+      cursor: pointer;
+      box-shadow: 0 4px 20px rgba(229, 9, 20, 0.5);
+      transition: all 0.2s ease-in-out;
+      outline: none;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    #play-btn:focus, #play-btn:hover {
+      background-color: #ff1e27;
+      border-color: #ffffff;
+      transform: scale(1.08);
+      box-shadow: 0 6px 30px rgba(255, 30, 39, 0.8);
+    }
+
+    /* Area sensibile ai movimenti sopra il player per intercettare mouse e touch */
+    #interaction-detector {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 10;
+      pointer-events: none; /* Permette l'interazione diretta sotto, ma cattura l'evento globale */
+    }
+
+    /* Overlay Titolo a Scomparsa */
+    #title-overlay {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      z-index: 50;
+      color: #ffffff;
+      background: rgba(0, 0, 0, 0.75);
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      backdrop-filter: blur(6px);
+      border-left: 4px solid #e50914;
+      pointer-events: none;
+      transition: opacity 0.4s ease-in-out;
+      opacity: 0;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+    }
+
+    #title-overlay.visible {
+      opacity: 1;
+    }
+/* Barra comandi touch */
+    #controls {
+      position: absolute;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%);
+      z-index: 60;
+      display: flex;
+      gap: 10px;
+      padding: 10px 12px;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(6px);
+      border-radius: 40px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease-in-out;
+      max-width: 96%;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    #controls.visible { opacity: 1; pointer-events: auto; }
+    #controls button {
+      min-width: 58px;
+      height: 58px;
+      padding: 0 14px;
+      border: 2px solid transparent;
+      border-radius: 29px;
+      background: rgba(255, 255, 255, 0.12);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      outline: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #controls button:active, #controls button:focus, #controls button:hover {
+      background: #e50914;
+      border-color: #fff;
+    }
+
+    /* Schermata di pausa (il player viene scaricato) */
+    #pause-screen {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 30;
+      background-color: #050505;
+      color: #fff;
+      display: none;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      pointer-events: none;
+      text-align: center;
+    }
+    #pause-screen.visible { display: flex; }
+    #pause-screen .pause-icon { font-size: 64px; color: #e50914; }
+    #pause-screen .pause-title { font-size: 28px; font-weight: 700; }
+    #pause-screen .pause-time { font-size: 18px; opacity: 0.7; }
+  </style>
+</head>
+<body>
+
+  <!-- Overlay Titolo -->
+  <div id="title-overlay">Caricamento titolo...</div>
+
+  <!-- Rilevatore Interazioni -->
+  <div id="interaction-detector"></div>
+
+  <!-- Schermata di Avvio con Pulsante Play -->
+  <div id="start-screen">
+    <button id="play-btn" autofocus tabindex="0">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M8 5v14l11-7z"/>
+      </svg>
+      GUARDA ORA
+    </button>
+  </div>
+
+  <!-- Schermata di pausa -->
+  <div id="pause-screen">
+    <div class="pause-icon">⏸</div>
+    <div class="pause-title">Video in pausa</div>
+    <div class="pause-time" id="pause-time"></div>
+  </div>
+  <!-- Comandi su schermo -->
+  <div id="controls">
+    <button id="btn-back" type="button">⏪ 10</button>
+    <button id="btn-pause" type="button">⏸ Pausa</button>
+    <button id="btn-fwd" type="button">10 ⏩</button>
+    <button id="btn-lang" type="button">🌐 IT</button>
+    <button id="btn-subs" type="button">💬 SUB OFF</button>
+    <button id="btn-restart" type="button">🔄</button>
+  </div>
+
+  <div id="player-container">
+    <iframe 
+      id="player"
+      allowfullscreen 
+      scrolling="no" 
+      allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+      referrerpolicy="origin">
+    </iframe>
+  </div>
+
+  <script>
+    const TMDB_API_KEY = 'eff30813a2950a33e36b51ff09c71f97';
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const type = urlParams.get('type') || 'movie';
+    const id = urlParams.get('id') || '969681';
+    const season = urlParams.get('s') || '1';
+    const episode = urlParams.get('e') || '1';
+
+    let currentLang = urlParams.get('lang') || 'it';
+    let currentSubs = urlParams.get('sottotitoli') || 'off';
+    let currentPosition = parseInt(urlParams.get('Startat') || urlParams.get('startAt') || '0', 10);
+    let isStarted = false;
+    let hideTitleTimeout = null;
+
+    let playerIframe = document.getElementById('player');
+    const startScreen = document.getElementById('start-screen');
+    const playBtn = document.getElementById('play-btn');
+    const titleOverlay = document.getElementById('title-overlay');
+    const controlsEl = document.getElementById('controls');
+
+    // Recupera il nome da TMDB
+    async function fetchTitleFromTMDB() {
+      const endpoint = type === 'tv'
+        ? `https://api.themoviedb.org/3/tv/${id}?api_key=${TMDB_API_KEY}&language=it-IT`
+        : `https://api.themoviedb.org/3/movie/${id}?api_key=${TMDB_API_KEY}&language=it-IT`;
+
+      try {
+        const response = await fetch(endpoint);
+        if (!response.ok) throw new Error('Network error');
+        const data = await response.json();
+
+        let realTitle = data.title || data.name || data.original_title || data.original_name;
+        
+        if (type === 'tv') {
+          titleOverlay.textContent = `${realTitle} - S${season}:E${episode}`;
+        } else {
+          titleOverlay.textContent = realTitle;
+        }
+      } catch (error) {
+        titleOverlay.textContent = type === 'tv' ? `SERIE TV - S${season}:E${episode}` : `FILM`;
+      }
+    }
+
+    fetchTitleFromTMDB();
+
+    // Mostra il titolo e imposta il timer per nasconderlo dopo 3 secondi
+    function triggerTitleVisibility() {
+      if (!isStarted) return;
+
+      // Rendiamo visibile l'overlay
+      titleOverlay.classList.add('visible');
+      controlsEl.classList.add('visible');
+
+      // Resettiamo il timer ogni volta che c'è un'interazione
+      if (hideTitleTimeout) {
+        clearTimeout(hideTitleTimeout);
+      }
+
+      hideTitleTimeout = setTimeout(() => {
+        titleOverlay.classList.remove('visible');
+        controlsEl.classList.remove('visible');
+      }, 3000);
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      playBtn.focus();
+    });
+
+    // ---- Tracciamento posizione tramite eventi VixSrc ----
+    // VixSrc invia PLAYER_EVENT al parent: play, pause, seeked, ended, timeupdate.
+    let basePos = currentPosition;
+    let baseTs = Date.now();
+    let estPaused = false;
+
+    function rebase(pos) {
+      basePos = Math.max(0, Math.floor(Number(pos) || 0));
+      baseTs = Date.now();
+    }
+
+    function getPosition() {
+      if (!isStarted) return currentPosition;
+      return estPaused
+        ? basePos
+        : Math.max(currentPosition, Math.floor(basePos + (Date.now() - baseTs) / 1000));
+    }
+
+    window.addEventListener('message', (event) => {
+      // Accetta solo messaggi provenienti da VixSrc.
+      if (event.origin !== 'https://vixsrc.to') return;
+
+      let message = event.data;
+      if (typeof message === 'string') {
+        try { message = JSON.parse(message); } catch (_) { return; }
+      }
+
+      if (!message || message.type !== 'PLAYER_EVENT' || !message.data) return;
+
+      const payload = message.data;
+      const t = Number(payload.currentTime);
+
+      if (Number.isFinite(t) && t >= 0) {
+        currentPosition = Math.floor(t);
+        rebase(currentPosition);
+      }
+
+      if (payload.event === 'play') {
+        estPaused = false;
+        isPaused = false;
+        refreshControls();
+      } else if (payload.event === 'pause') {
+        estPaused = true;
+        isPaused = true;
+        refreshControls();
+      } else if (payload.event === 'seeked' || payload.event === 'timeupdate') {
+        // currentPosition è già stato aggiornato sopra.
+      } else if (payload.event === 'ended') {
+        estPaused = true;
+      }
+    });
+
+    let isPaused = false;
+
+    // Mantiene lo stesso iframe per tutta la sessione.
+    // Questo segue il normale modello di embed: cambia soltanto src quando serve.
+    function loadInPlayer(url) {
+      if (!playerIframe) return;
+
+      if (!url) {
+        playerIframe.removeAttribute('src');
+        playerIframe.removeAttribute('data-embed-url');
+        return;
+      }
+
+      if (playerIframe.dataset.embedUrl === url) return;
+
+      playerIframe.dataset.embedUrl = url;
+      playerIframe.src = url;
+    }
+
+    // Ricarica lo stream da una posizione precisa.
+    // overridePos: secondi di partenza (null = punto attuale). Autoplay dipende da isPaused.
+    function updatePlayer(overridePos = null) {
+      currentPosition = (overridePos !== null) ? Math.max(0, Math.floor(overridePos)) : getPosition();
+      rebase(currentPosition);
+      estPaused = isPaused;
+      lastRealUpdate = 0;
+
+      const pauseScreen = document.getElementById('pause-screen');
+
+      // Pausa gestita dall'interfaccia esterna.
+      // Non distruggiamo l'iframe: evitiamo caricamenti ripetuti non necessari.
+      if (isPaused) {
+        estPaused = true;
+        const m = Math.floor(currentPosition / 60), sec = currentPosition % 60;
+        const h = Math.floor(m / 60);
+        const fmt = (h > 0 ? h + ':' + String(m % 60).padStart(2, '0') : m) + ':' + String(sec).padStart(2, '0');
+        document.getElementById('pause-time').textContent = 'Punto di ripresa: ' + fmt;
+        pauseScreen.classList.add('visible');
+        triggerTitleVisibility();
+        return;
+      }
+      pauseScreen.classList.remove('visible');
+
+      const baseUrl = type === 'tv' 
+        ? `https://vixsrc.to/tv/${id}/${season}/${episode}` 
+        : `https://vixsrc.to/movie/${id}`;
+
+      const embedUrl = `${baseUrl}?primaryColor=e50914&lang=${currentLang}&autoplay=false&sottotitoli=${currentSubs}&startAt=${currentPosition}&canPlayFHD=1`;
+      
+      loadInPlayer(embedUrl);
+      triggerTitleVisibility();
+    }
+
+    function startPlayback() {
+      if (isStarted) return;
+      isStarted = true;
+      startScreen.style.display = 'none';
+      updatePlayer();
+    }
+
+    playBtn.addEventListener('click', startPlayback);
+
+    // Gestione eventi per far ricomparire il titolo ad ogni interazione
+    const interactionEvents = ['mousemove', 'mousedown', 'touchstart', 'pointermove', 'scroll'];
+    interactionEvents.forEach(eventType => {
+      window.addEventListener(eventType, triggerTitleVisibility, { passive: true });
+      document.addEventListener(eventType, triggerTitleVisibility, { passive: true });
+    });
+
+    // Controllo tastiera (Frecce, Spazio, ecc.)
+    window.addEventListener('keydown', (event) => {
+      if (!isStarted) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          startPlayback();
+        }
+        return;
+      }
+
+      triggerTitleVisibility();
+
+      if (event.key === 'ArrowUp') { event.preventDefault(); toggleLang(); }
+      else if (event.key === 'ArrowDown') { event.preventDefault(); restartStream(); }
+      else if (event.key === ' ') { event.preventDefault(); togglePause(); }
+      else if (event.key === 'ArrowLeft') { event.preventDefault(); seekBy(-10); }
+      else if (event.key === 'ArrowRight') { event.preventDefault(); seekBy(10); }
+    });
+
+    // ---- Azioni (usate da tastiera e da pulsanti touch) ----
+    function refreshControls() {
+      document.getElementById('btn-pause').textContent = isPaused ? '▶ Play' : '⏸ Pausa';
+      document.getElementById('btn-lang').textContent = '🌐 ' + currentLang.toUpperCase();
+      document.getElementById('btn-subs').textContent = '💬 SUB ' + currentSubs.toUpperCase();
+    }
+    function seekBy(delta) { updatePlayer(getPosition() + delta); }
+    function togglePause() { isPaused = !isPaused; updatePlayer(); refreshControls(); }
+    function toggleLang() { currentLang = (currentLang === 'it') ? 'en' : 'it'; updatePlayer(); refreshControls(); }
+    function toggleSubs() { currentSubs = (currentSubs === 'off') ? 'on' : 'off'; updatePlayer(); refreshControls(); }
+    function restartStream() { updatePlayer(); }
+
+    const bind = (id, fn) => document.getElementById(id).addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation(); if (isStarted) fn();
+    });
+    bind('btn-back', () => seekBy(-10));
+    bind('btn-fwd', () => seekBy(10));
+    bind('btn-pause', togglePause);
+    bind('btn-lang', toggleLang);
+    bind('btn-subs', toggleSubs);
+    bind('btn-restart', restartStream);
+    refreshControls();
+
+
+
+  </script>
+
+</body>
+</html>
